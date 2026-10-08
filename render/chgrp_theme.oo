@@ -1,0 +1,83 @@
+// # oochgrp Terminal and Telemetry Renderer
+//
+// Logline: Formats POSIX diagnostic notices, systemd-tmpfiles rules, and JSON telemetry streams.
+//
+// Setup: Maps ChgrpTarget and GroupEntry models into terminal outputs and JSON structures.
+//
+// Beats:
+//   1. Format individual file target status (changed, retained, dry-run, failure).
+//   2. Format execution summary counts and error warnings.
+//   3. Render structured JSON telemetry for automated agent ingestion.
+//   4. Render JSON representation of resolved group entries.
+
+import "core/chgrp_types.oo";
+
+pub fn render_target_output(target: ChgrpTarget, verbose: Bool, changes_only: Bool, quiet: Bool) -> String {
+    if target.status == "CHANGED" {
+        return "changed group of '" + target.path + "' from "
+            + target.current_group + " to " + target.target_group + "\n";
+    }
+    if target.status == "WOULD_CHANGE" {
+        return "[dry-run] would change group of '" + target.path + "' from "
+            + target.current_group + " to " + target.target_group + "\n";
+    }
+    if target.status == "RETAINED" {
+        if changes_only {
+            return "";
+        }
+        if verbose {
+            return "group of '" + target.path + "' retained as " + target.target_group + "\n";
+        }
+        return "";
+    }
+    if target.status == "FAILED" {
+        if quiet {
+            return "";
+        }
+        return "oochgrp: failed to change group of '" + target.path + "' from "
+            + target.current_group + " to " + target.target_group + ": " + target.error_message + "\n";
+    }
+    return "";
+}
+
+pub fn render_summary_warnings(sum: ChgrpSummary) -> String {
+    let mut out: String = "";
+    if sum.failed > 0 {
+        out = out + "oochgrp: WARNING: " + to_string(sum.failed) + " path(s) failed group modification\n";
+    }
+    return out;
+}
+
+pub fn render_json_group(group: GroupEntry) -> String {
+    return "{\"name\":\"" + group.name + "\",\"gid\":" + to_string(group.gid)
+        + ",\"members\":\"" + group.members + "\"}\n";
+}
+
+pub fn render_json_results(
+    targets: List[ChgrpTarget],
+    sum: ChgrpSummary,
+    group_name: String,
+    target_gid: Int
+) -> String {
+    let mut out: String = "{\"status\":\"ok\",\"tool\":\"oochgrp\",\"target_group\":\"" + group_name + "\"";
+    out = out + ",\"target_gid\":" + to_string(target_gid);
+    out = out + ",\"total\":" + to_string(sum.total);
+    out = out + ",\"changed\":" + to_string(sum.changed);
+    out = out + ",\"retained\":" + to_string(sum.retained);
+    out = out + ",\"failed\":" + to_string(sum.failed);
+    out = out + ",\"targets\":[";
+
+    let n: Int = list_len(targets);
+    let mut i: Int = 0;
+    while i < n {
+        let t: ChgrpTarget = list_get(targets, i);
+        out = out + "{\"path\":\"" + t.path + "\",\"from_group\":\"" + t.current_group
+            + "\",\"to_group\":\"" + t.target_group + "\",\"status\":\"" + t.status + "\"}";
+        if i < n - 1 {
+            out = out + ",";
+        }
+        i = i + 1;
+    }
+    out = out + "]}\n";
+    return out;
+}

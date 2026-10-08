@@ -1,0 +1,11 @@
+Package: oochgrp
+Version: 0.2.0-1
+Section: utils
+Priority: optional
+Architecture: amd64
+Maintainer: openOODA-tools <ops@openooda.org>
+Depends: libc6
+Description: Sovereign GROUP CHANGER
+ Updates primary and auxiliary group associations for filesystem paths.
+ Pure openOODA utility with zero ambient authority, systemd-tmpfiles declarative
+ synthesis, terminal ergonomics, and native Model Context Protocol (MCP) server.

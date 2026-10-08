@@ -1,0 +1,54 @@
+// # oochgrp IPC Subsystem Anchor
+//
+// Logline: Verification anchor validating JSON extraction, options parsing, and MCP protocols.
+//
+// Setup: Asserts IPC invariants across option decoding and JSON-RPC message formats.
+//
+// Beats:
+//   1. Validate JSON field extraction and escape formatting.
+//   2. Validate command-line options parsing for flags and targets.
+//   3. Validate MCP handshake response structures.
+//   4. Deliver IPC subsystem readiness predicate.
+
+import "ipc/json_field.oo";
+import "ipc/chgrp_opts.oo";
+import "ipc/mcp_serve.oo";
+
+pub fn verify_ipc_subsystem() -> Bool {
+    let raw: String = "hello \"world\"\n";
+    let esc: String = json_escape(raw);
+    if !str_contains(esc, "\\\"world\\\"") {
+        return false;
+    }
+
+    let payload: String = "{\"method\":\"tools/call\",\"id\":42}";
+    let method: String = extract_json_str(payload, "method");
+    if method != "tools/call" {
+        return false;
+    }
+
+    let mut args: List[String] = list_new();
+    args = list_push(args, "-R");
+    args = list_push(args, "--dry-run");
+    args = list_push(args, "wheel");
+    args = list_push(args, "/tmp/foo");
+    let opts: ChgrpOpts = parse_chgrp_opts(args);
+    if !opts.recursive || !opts.dry_run || opts.group != "wheel" {
+        return false;
+    }
+    if list_len(opts.files) != 1 {
+        return false;
+    }
+
+    let init_resp: String = render_mcp_init("1");
+    if !str_contains(init_resp, "protocolVersion") {
+        return false;
+    }
+
+    let list_resp: String = render_mcp_tools_list("2");
+    if !str_contains(list_resp, "chgrp_resolve") {
+        return false;
+    }
+
+    return true;
+}

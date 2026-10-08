@@ -1,0 +1,36 @@
+// # oochgrp Render Subsystem Anchor
+//
+// Logline: Verification anchor validating terminal output renderers and JSON formatters.
+//
+// Setup: Asserts rendering invariants across changed, retained, and JSON outputs.
+//
+// Beats:
+//   1. Validate changed target output rendering.
+//   2. Validate retained target output filtering under changes_only.
+//   3. Validate JSON summary and target stream serialization.
+//   4. Deliver render subsystem readiness predicate.
+
+import "core/chgrp_types.oo";
+import "render/chgrp_theme.oo";
+
+pub fn verify_render_subsystem() -> Bool {
+    let t1: ChgrpTarget = make_chgrp_target("/data/file.txt", "staff", 50, "users", 100, "CHANGED", "");
+    let s1: String = render_target_output(t1, false, false, false);
+    if !str_contains(s1, "changed group of '/data/file.txt'") {
+        return false;
+    }
+
+    let t2: ChgrpTarget = make_chgrp_target("/data/file.txt", "users", 100, "users", 100, "RETAINED", "");
+    let s2: String = render_target_output(t2, false, true, false);
+    if chars_len(s2) != 0 {
+        return false;
+    }
+
+    let grp: GroupEntry = make_group_entry("wheel", 10, "alice");
+    let json_g: String = render_json_group(grp);
+    if !str_contains(json_g, "\"gid\":10") {
+        return false;
+    }
+
+    return true;
+}

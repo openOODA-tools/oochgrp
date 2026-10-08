@@ -1,0 +1,162 @@
+// # oochgrp Planning and Execution Engine
+//
+// Logline: Plans filesystem group changes, synthesizes systemd-tmpfiles rules, and executes updates.
+//
+// Setup: Inspects path metadata under ProcessCap and maps declarative change operations.
+//
+// Beats:
+//   1. Inspect filesystem path group and GID attributes.
+//   2. Formulate declarative change plans and detect retained configurations.
+//   3. Synthesize systemd-tmpfiles declarative state specifications.
+//   4. Apply changes or generate dry-run preview records.
+
+import "core/chgrp_types.oo";
+import "core/chgrp_lookup.oo";
+import "std/fs/process/process.oo";
+
+pub fn inspect_path_group(proc_cap: &ProcessCap, path: String) -> String {
+    let cmd: String = "stat -c '%G' " + path;
+    let res: Result[String, String] = process_exec(proc_cap, cmd);
+    if res.is_ok() {
+        let out: String = match res { Ok(s) => s, Err(_) => "" };
+        return str_trim(out);
+    }
+    return "unknown";
+}
+
+pub fn inspect_path_gid(proc_cap: &ProcessCap, path: String) -> Int {
+    let cmd: String = "stat -c '%g' " + path;
+    let res: Result[String, String] = process_exec(proc_cap, cmd);
+    if res.is_ok() {
+        let out: String = match res { Ok(s) => s, Err(_) => "" };
+        return parse_gid(str_trim(out));
+    }
+    return -1;
+}
+
+pub fn plan_single_target(
+    path: String,
+    curr_group: String,
+    curr_gid: Int,
+    tgt_group: String,
+    tgt_gid: Int
+) -> ChgrpTarget {
+    let same_name: Bool = (chars_len(curr_group) > 0 && curr_group == tgt_group);
+    let same_gid: Bool = (curr_gid >= 0 && tgt_gid >= 0 && curr_gid == tgt_gid);
+    if same_name || same_gid {
+        return make_chgrp_target(path, curr_group, curr_gid, tgt_group, tgt_gid, "RETAINED", "");
+    }
+    return make_chgrp_target(path, curr_group, curr_gid, tgt_group, tgt_gid, "PENDING", "");
+}
+
+pub fn summarize_targets(targets: List[ChgrpTarget]) -> ChgrpSummary {
+    let n: Int = list_len(targets);
+    let mut changed_count: Int = 0;
+    let mut retained_count: Int = 0;
+    let mut failed_count: Int = 0;
+    let mut i: Int = 0;
+
+    while i < n {
+        let t: ChgrpTarget = list_get(targets, i);
+        if t.status == "CHANGED" || t.status == "WOULD_CHANGE" {
+            changed_count = changed_count + 1;
+        } else if t.status == "RETAINED" {
+            retained_count = retained_count + 1;
+        } else if t.status == "FAILED" {
+            failed_count = failed_count + 1;
+        }
+        i = i + 1;
+    }
+    return make_chgrp_summary(n, changed_count, retained_count, failed_count);
+}
+
+pub fn build_tmpfiles_rules(targets: List[ChgrpTarget], recursive: Bool) -> List[TmpfilesEntry] {
+    let mut entries: List[TmpfilesEntry] = list_new();
+    let n: Int = list_len(targets);
+    let act: String = if recursive { "Z" } else { "z" };
+    let mut i: Int = 0;
+
+    while i < n {
+        let t: ChgrpTarget = list_get(targets, i);
+        let entry: TmpfilesEntry = make_tmpfiles_entry(act, t.path, "-", "-", t.target_group);
+        entries = list_push(entries, entry);
+        i = i + 1;
+    }
+    return entries;
+}
+
+pub fn format_tmpfiles_rule(entry: TmpfilesEntry) -> String {
+    return entry.action + " " + entry.path + " " + entry.mode + " "
+        + entry.uid + " " + entry.gid + " " + entry.age + " " + entry.argument;
+}
+
+pub fn format_tmpfiles_config(entries: List[TmpfilesEntry]) -> String {
+    let mut out: String = "# /etc/tmpfiles.d/oochgrp.conf - declarative group ownership\n"
+        + "# Type Path Mode UID GID Age Argument\n";
+    let n: Int = list_len(entries);
+    let mut i: Int = 0;
+    while i < n {
+        let e: TmpfilesEntry = list_get(entries, i);
+        out = out + format_tmpfiles_rule(e) + "\n";
+        i = i + 1;
+    }
+    return out;
+}
+
+pub fn execute_chgrp_plan(
+    proc_cap: &ProcessCap,
+    targets: List[ChgrpTarget],
+    recursive: Bool,
+    dry_run: Bool
+) -> List[ChgrpTarget] {
+    let mut executed: List[ChgrpTarget] = list_new();
+    let n: Int = list_len(targets);
+    let mut i: Int = 0;
+
+    while i < n {
+        let t: ChgrpTarget = list_get(targets, i);
+        if t.status == "RETAINED" {
+            executed = list_push(executed, t);
+        } else if dry_run {
+            let updated: ChgrpTarget = make_chgrp_target(
+                t.path,
+                t.current_group,
+                t.current_gid,
+                t.target_group,
+                t.target_gid,
+                "WOULD_CHANGE",
+                ""
+            );
+            executed = list_push(executed, updated);
+        } else {
+            let flag: String = if recursive { "-R " } else { "" };
+            let cmd: String = "chgrp " + flag + t.target_group + " " + t.path;
+            let res: Result[String, String] = process_exec(proc_cap, cmd);
+            if res.is_ok() {
+                let updated: ChgrpTarget = make_chgrp_target(
+                    t.path,
+                    t.current_group,
+                    t.current_gid,
+                    t.target_group,
+                    t.target_gid,
+                    "CHANGED",
+                    ""
+                );
+                executed = list_push(executed, updated);
+            } else {
+                let updated: ChgrpTarget = make_chgrp_target(
+                    t.path,
+                    t.current_group,
+                    t.current_gid,
+                    t.target_group,
+                    t.target_gid,
+                    "FAILED",
+                    "operation failed or permission denied"
+                );
+                executed = list_push(executed, updated);
+            }
+        }
+        i = i + 1;
+    }
+    return executed;
+}

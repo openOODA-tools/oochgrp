@@ -1,0 +1,138 @@
+// # Model Context Protocol (MCP) Server for oochgrp
+//
+// Logline: JSON-RPC 2.0 stdio server providing group resolution, inspection, planning, and tmpfiles synthesis.
+//
+// Setup: Demands FsReadCap and ProcessCap to service streaming agent tool invocations over standard input.
+//
+// Beats:
+//   1. Handle MCP initialize handshake with server metadata.
+//   2. Expose tools/list catalogue with five sovereign group management tools.
+//   3. Dispatch tools/call for chgrp_resolve, inspect, plan, tmpfiles, and audit.
+//   4. Deliver streaming JSON-RPC responses over standard output.
+
+import "core/chgrp_types.oo";
+import "core/chgrp_lookup.oo";
+import "core/chgrp_plan.oo";
+import "ipc/json_field.oo";
+
+pub fn render_mcp_init(id: String) -> String {
+    return "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"result\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"oochgrp\",\"version\":\"0.2.0\"}}}\n";
+}
+
+pub fn render_mcp_tools_list(id: String) -> String {
+    let mut out: String = "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"result\":{\"tools\":[";
+    out = out + "{\"name\":\"chgrp_resolve\",\"description\":\"Resolve group name or numeric GID against /etc/group database.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"group\":{\"type\":\"string\"}},\"required\":[\"group\"]}},";
+    out = out + "{\"name\":\"chgrp_inspect\",\"description\":\"Inspect filesystem path group ownership and GID.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}},";
+    out = out + "{\"name\":\"chgrp_plan\",\"description\":\"Plan group ownership change for path without disk modification.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"},\"target_group\":{\"type\":\"string\"},\"current_group\":{\"type\":\"string\"}},\"required\":[\"path\",\"target_group\"]}},";
+    out = out + "{\"name\":\"chgrp_tmpfiles\",\"description\":\"Synthesize declarative systemd-tmpfiles rule for path.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"},\"group\":{\"type\":\"string\"},\"recursive\":{\"type\":\"string\"}},\"required\":[\"path\",\"group\"]}},";
+    out = out + "{\"name\":\"chgrp_audit\",\"description\":\"Audit path group ownership against expected security baseline.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"},\"expected_group\":{\"type\":\"string\"}},\"required\":[\"path\",\"expected_group\"]}}";
+    out = out + "]}}\n";
+    return out;
+}
+
+pub fn handle_mcp_call(
+    fs: &FsReadCap,
+    proc_cap: &ProcessCap,
+    id: String,
+    tool_name: String,
+    req: String
+) -> String {
+    if tool_name == "chgrp_resolve" {
+        let group_spec: String = extract_json_str(req, "group");
+        let groups: List[GroupEntry] = load_system_groups(fs);
+        let resolved: GroupEntry = resolve_group(groups, group_spec);
+        if resolved.gid >= 0 {
+            let res_text: String = "Group: " + resolved.name + "\nGID: " + to_string(resolved.gid)
+                + "\nMembers: " + resolved.members + "\n";
+            return "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"" + json_escape(res_text) + "\"}]}}\n";
+        }
+        return "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"Group not found: " + json_escape(group_spec) + "\"}]}}\n";
+    }
+
+    if tool_name == "chgrp_inspect" {
+        let path: String = extract_json_str(req, "path");
+        let grp: String = inspect_path_group(proc_cap, path);
+        let gid: Int = inspect_path_gid(proc_cap, path);
+        let res_text: String = "Path: " + path + "\nGroup: " + grp + "\nGID: " + to_string(gid) + "\n";
+        return "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"" + json_escape(res_text) + "\"}]}}\n";
+    }
+
+    if tool_name == "chgrp_plan" {
+        let path: String = extract_json_str(req, "path");
+        let tgt_group: String = extract_json_str(req, "target_group");
+        let mut curr_group: String = extract_json_str(req, "current_group");
+        if chars_len(curr_group) == 0 {
+            curr_group = inspect_path_group(proc_cap, path);
+        }
+        let curr_gid: Int = inspect_path_gid(proc_cap, path);
+        let target: ChgrpTarget = plan_single_target(path, curr_group, curr_gid, tgt_group, -1);
+        let res_text: String = "Path: " + path + "\nCurrent Group: " + curr_group
+            + "\nTarget Group: " + tgt_group + "\nPlan Status: " + target.status + "\n";
+        return "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"" + json_escape(res_text) + "\"}]}}\n";
+    }
+
+    if tool_name == "chgrp_tmpfiles" {
+        let path: String = extract_json_str(req, "path");
+        let grp: String = extract_json_str(req, "group");
+        let rec_str: String = extract_json_str(req, "recursive");
+        let is_rec: Bool = (rec_str == "true" || rec_str == "1");
+        let act: String = if is_rec { "Z" } else { "z" };
+        let entry: TmpfilesEntry = make_tmpfiles_entry(act, path, "-", "-", grp);
+        let rule: String = format_tmpfiles_rule(entry);
+        return "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"" + json_escape(rule) + "\n\"}]}}\n";
+    }
+
+    if tool_name == "chgrp_audit" {
+        let path: String = extract_json_str(req, "path");
+        let exp_group: String = extract_json_str(req, "expected_group");
+        let curr_group: String = inspect_path_group(proc_cap, path);
+        let mut res_text: String = "";
+        if curr_group == exp_group {
+            res_text = "COMPLIANT: " + path + " matches expected group " + exp_group + "\n";
+        } else {
+            res_text = "DRIFTED: " + path + " has group '" + curr_group + "', expected '" + exp_group + "'\n";
+        }
+        return "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"" + json_escape(res_text) + "\"}]}}\n";
+    }
+
+    return "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}\n";
+}
+
+pub fn handle_mcp_message(fs: &FsReadCap, proc_cap: &ProcessCap, req: String) -> String {
+    let id_str: String = extract_json_str(req, "id");
+    let id: String = if chars_len(id_str) > 0 { "\"" + id_str + "\"" } else { "1" };
+    let method: String = extract_json_str(req, "method");
+
+    if method == "initialize" {
+        return render_mcp_init(id);
+    }
+    if method == "tools/list" {
+        return render_mcp_tools_list(id);
+    }
+    if method == "tools/call" {
+        let tool_name: String = extract_json_str(req, "name");
+        return handle_mcp_call(fs, proc_cap, id, tool_name, req);
+    }
+    return "{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}\n";
+}
+
+pub fn run_mcp_server(fs: &FsReadCap, proc_cap: &ProcessCap) {
+    let mut running: Bool = true;
+    while running {
+        let line_res: Result[String, String] = oo_read_stdin_chunk(fs, 8192);
+        if !line_res.is_ok() {
+            running = false;
+        } else {
+            let line: String = match line_res { Ok(s) => s, Err(_) => "" };
+            let trimmed: String = str_trim(line);
+            if chars_len(trimmed) == 0 {
+                running = false;
+            } else {
+                let resp: String = handle_mcp_message(fs, proc_cap, trimmed);
+                if chars_len(resp) > 0 {
+                    print(resp);
+                }
+            }
+        }
+    }
+}

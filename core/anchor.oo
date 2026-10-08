@@ -1,0 +1,60 @@
+// # oochgrp Core Subsystem Anchor
+//
+// Logline: Verification anchor validating group parsing, planning, and tmpfiles synthesis.
+//
+// Setup: Asserts internal invariants across data structures and resolution pipelines.
+//
+// Beats:
+//   1. Validate numeric GID parsing and string classification.
+//   2. Validate colon-delimited /etc/group line parsing.
+//   3. Validate declarative group planning and retention logic.
+//   4. Validate systemd-tmpfiles rule formatting.
+
+import "core/chgrp_types.oo";
+import "core/chgrp_lookup.oo";
+import "core/chgrp_plan.oo";
+import "core/chgrp_demo.oo";
+
+pub fn verify_core_subsystem() -> Bool {
+    if !is_numeric("1000") || is_numeric("audio") {
+        return false;
+    }
+    if parse_gid("190") != 190 {
+        return false;
+    }
+
+    let raw: String = "wheel:x:10:alice,bob";
+    let entry: GroupEntry = parse_group_line(raw);
+    if entry.name != "wheel" || entry.gid != 10 {
+        return false;
+    }
+
+    let db_text: String = get_demo_group_db();
+    let db: List[GroupEntry] = parse_group_database(db_text);
+    if list_len(db) < 5 {
+        return false;
+    }
+
+    let found: GroupEntry = find_group_by_name(db, "audio");
+    if found.gid != 29 {
+        return false;
+    }
+
+    let plan1: ChgrpTarget = plan_single_target("/tmp/test", "audio", 29, "audio", 29);
+    if plan1.status != "RETAINED" {
+        return false;
+    }
+
+    let plan2: ChgrpTarget = plan_single_target("/tmp/test", "root", 0, "audio", 29);
+    if plan2.status != "PENDING" {
+        return false;
+    }
+
+    let tmp_entry: TmpfilesEntry = make_tmpfiles_entry("z", "/var/log/audit", "-", "-", "audit");
+    let line: String = format_tmpfiles_rule(tmp_entry);
+    if !str_starts_with(line, "z /var/log/audit") {
+        return false;
+    }
+
+    return true;
+}

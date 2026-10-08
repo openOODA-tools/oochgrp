@@ -10,7 +10,7 @@
 ```
 
 **Sovereign GROUP CHANGER**  
-*Updates primary and auxiliary group associations for filesystem paths.*  
+*Updates primary and auxiliary group associations for filesystem paths with systemd-tmpfiles synthesis.*  
 *Two Faces, One Engine:* Modern terminal ergonomics for humans • Zero-leakage MCP for AI agents  
 Written in 100% pure [openOODA](https://github.com/openOODA).
 
@@ -26,7 +26,7 @@ Written in 100% pure [openOODA](https://github.com/openOODA).
 
 ### Automated Installer (Linux x86_64 & aarch64)
 ```bash
-curl -fsSL https://openooda-tools.github.io/oochgrp/install.sh | bash
+curl -fsSL https://openOODA-tools.github.io/oochgrp/install.sh | bash
 ```
 
 ### Native Package Managers
@@ -37,16 +37,16 @@ yay -S oochgrp-bin
 cd packaging/arch && makepkg -si
 
 # Debian / Ubuntu (.deb)
-curl -fsSL https://openooda-tools.github.io/oochgrp/install.sh | bash -s -- --deb
+curl -fsSL https://openOODA-tools.github.io/oochgrp/install.sh | bash -s -- --deb
 
 # Fedora / RHEL (.rpm)
-curl -fsSL https://openooda-tools.github.io/oochgrp/install.sh | bash -s -- --rpm
+curl -fsSL https://openOODA-tools.github.io/oochgrp/install.sh | bash -s -- --rpm
 ```
 
 ### Uninstallation
 ```bash
 oochgrp-uninstall
-# or: curl -fsSL https://openooda-tools.github.io/oochgrp/uninstall.sh | bash
+# or: curl -fsSL https://openOODA-tools.github.io/oochgrp/uninstall.sh | bash
 ```
 
 ---
@@ -54,26 +54,46 @@ oochgrp-uninstall
 ## 2. CLI Usage
 
 ```
-usage: oochgrp [options] [ARGUMENTS]...
+oochgrp 0.2.0 (openOODA sovereign files & navigation)
+usage: oochgrp [OPTION]... GROUP FILE...
+  or:  oochgrp [OPTION]... --reference=RFILE FILE...
 
-Updates primary and auxiliary group associations for filesystem paths.
+Change the group of each FILE to GROUP.
 
 Options:
-  -h, --help           display this help and exit
-  -v, --version        output version information and exit
-      --json           output formatted as JSON Lines
-      --color <WHEN>   colorize output: auto, always, never [default: auto]
-      --theme <NAME>   override active oote palette
-      --mcp            run as Model Context Protocol stdio server
+  -c, --changes          like verbose but report only when a change is made
+  -f, --silent, --quiet  suppress most error messages
+  -v, --verbose          output a diagnostic for every file processed
+  -R, --recursive        operate on files and directories recursively
+      --reference=RFILE  use RFILE's group rather than specifying a GROUP
+  -h, --no-dereference   affect symbolic links instead of any referenced file
+      --dry-run          simulate group changes without disk writes
+      --tmpfiles         synthesize declarative systemd-tmpfiles rules
+      --demo             run demonstration scenarios with synthetic fixtures
+      --json             output formatted as JSON Lines
+      --help             display this help and exit
+      --version          output version information and exit
+      --mcp              run as Model Context Protocol stdio server
 ```
 
 ---
 
-## 3. Theming Integration (`oote`)
+## 3. Declarative systemd-tmpfiles Synthesis
 
-`oochgrp` synchronizes visual styles and status colors with [oote](https://github.com/openOODA-tools/oote):
-* **Configuration:** Reads active palette from `~/.openooda/theme.oot`.
-* **Environment Overrides:** Respects `$OODA_THEME` and `$NO_COLOR`.
+Following pure systemd-native server architecture, `oochgrp` can emit declarative rules for `/etc/tmpfiles.d/*.conf`:
+
+```bash
+# Generate declarative non-recursive (z) and recursive (Z) rules:
+oochgrp --tmpfiles systemd-journal /var/log/audit.log
+oochgrp --tmpfiles -R users /srv/shared/workspace
+```
+
+Output:
+```ini
+# /etc/tmpfiles.d/oochgrp.conf - declarative group ownership
+# Type Path Mode UID GID Age Argument
+z /var/log/audit.log - - systemd-journal - -
+```
 
 ---
 
@@ -85,11 +105,18 @@ When invoked with `--mcp`, `oochgrp` runs a JSON-RPC 2.0 stdio server providing 
 oochgrp --mcp
 ```
 
+### Registered Tools
+* **`chgrp_resolve`**: Resolve group name or numeric GID against `/etc/group` database.
+* **`chgrp_inspect`**: Inspect filesystem path group ownership and GID.
+* **`chgrp_plan`**: Plan group ownership change for path without disk modification.
+* **`chgrp_tmpfiles`**: Synthesize declarative systemd-tmpfiles rule for path.
+* **`chgrp_audit`**: Audit path group ownership against expected security baseline.
+
 ---
 
 ## 5. Security & Zero Ambient Authority
 
-* **Pure Capability Bounded:** Operates strictly with explicit tokens (&FsReadCap, &FsWriteCap, &McpCap). Physical absence of ambient disk/net leakage.
+* **Pure Capability Bounded:** Operates strictly with explicit tokens (`&FsReadCap`, `&ProcessCap`, `&EnvCap`). Physical absence of ambient disk/net leakage.
 * **Negative-Trust Architecture:** Strict input validation and operational limits.
 * **Hermetic Binary:** Standalone zero-dependency executable.
 

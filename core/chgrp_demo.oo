@@ -1,0 +1,78 @@
+// # oochgrp Synthetic Demonstration Engine
+//
+// Logline: Synthetic group database and filesystem fixtures for offline testing and verification.
+//
+// Setup: Generates simulated Linux group entries and path transition scenarios.
+//
+// Beats:
+//   1. Supply synthetic /etc/group database fixture.
+//   2. Construct sample group transition target scenarios.
+//   3. Provide synthetic verification summary.
+//   4. Generate demonstration tmpfiles entries.
+
+import "core/chgrp_types.oo";
+import "core/chgrp_plan.oo";
+
+pub fn get_demo_group_db() -> String {
+    return "root:x:0:root\n"
+        + "bin:x:1:root,bin,daemon\n"
+        + "wheel:x:10:alice\n"
+        + "audio:x:29:pulse,pipewire\n"
+        + "video:x:44:wayland\n"
+        + "systemd-journal:x:190:logreader\n"
+        + "render:x:105:wayland\n"
+        + "staff:x:50:\n"
+        + "users:x:100:bob,carol\n"
+        + "nobody:x:65534:\n";
+}
+
+pub fn build_demo_targets() -> List[ChgrpTarget] {
+    let mut targets: List[ChgrpTarget] = list_new();
+    targets = list_push(targets, make_chgrp_target(
+        "/var/log/audit.log",
+        "root",
+        0,
+        "systemd-journal",
+        190,
+        "WOULD_CHANGE",
+        ""
+    ));
+    targets = list_push(targets, make_chgrp_target(
+        "/dev/snd/by-id/speaker",
+        "audio",
+        29,
+        "audio",
+        29,
+        "RETAINED",
+        ""
+    ));
+    targets = list_push(targets, make_chgrp_target(
+        "/srv/shared/workspace",
+        "staff",
+        50,
+        "users",
+        100,
+        "WOULD_CHANGE",
+        ""
+    ));
+    targets = list_push(targets, make_chgrp_target(
+        "/etc/shadow",
+        "root",
+        0,
+        "shadow",
+        42,
+        "FAILED",
+        "permission denied (protected)"
+    ));
+    return targets;
+}
+
+pub fn build_demo_summary() -> ChgrpSummary {
+    let targets: List[ChgrpTarget] = build_demo_targets();
+    return summarize_targets(targets);
+}
+
+pub fn build_demo_tmpfiles() -> List[TmpfilesEntry] {
+    let targets: List[ChgrpTarget] = build_demo_targets();
+    return build_tmpfiles_rules(targets, false);
+}

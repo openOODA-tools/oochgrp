@@ -4,7 +4,7 @@
 # "Removes oochgrp binary, package installations, and cache."
 #
 # Usage:
-#   curl -fsSL https://openooda-toochgrp.github.io/oochgrp/uninstall.sh | bash
+#   curl -fsSL https://openOODA-tools.github.io/oochgrp/uninstall.sh | bash
 #   or: ./uninstall.sh [options]
 #
 # Options:

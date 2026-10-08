@@ -1,52 +1,152 @@
 // # oochgrp Main Entry Point
 //
-// Logline: Updates primary and auxiliary group associations for filesystem paths.
+// Logline: Sovereign group changer with declarative systemd-tmpfiles synthesis and MCP stdio server.
 //
-// Setup: Demands explicit capability tokens and standard argument list.
+// Setup: Demands explicit capability tokens FsReadCap, ProcessCap, EnvCap.
 //
 // Beats:
 //   1. Parse command-line options and dispatch --help, --version, or --mcp.
-//   2. Execute capability-bounded oochgrp operations.
-//   3. Format and output structured results to standard output.
+//   2. Plan group transitions or synthesize declarative systemd-tmpfiles rules.
+//   3. Execute bounded group updates or render dry-run previews under ProcessCap.
+//   4. Deliver POSIX diagnostics or structured JSON telemetry.
 
-fn render_help() -> String {
-    return "oochgrp 0.1.0 (openOODA sovereign files & navigation)\n"
-        + "usage: oochgrp [options] [ARGUMENTS]...\n\n"
-        + "Updates primary and auxiliary group associations for filesystem paths.\n\n"
+import "core/chgrp_types.oo";
+import "core/chgrp_lookup.oo";
+import "core/chgrp_plan.oo";
+import "core/chgrp_demo.oo";
+import "render/chgrp_theme.oo";
+import "ipc/chgrp_opts.oo";
+import "ipc/mcp_serve.oo";
+
+pub fn render_help() -> String {
+    return "oochgrp 0.2.0 (openOODA sovereign files & navigation)\n"
+        + "usage: oochgrp [OPTION]... GROUP FILE...\n"
+        + "  or:  oochgrp [OPTION]... --reference=RFILE FILE...\n\n"
+        + "Change the group of each FILE to GROUP.\n\n"
         + "Options:\n"
-        + "  -h, --help           display this help and exit\n"
-        + "  -v, --version        output version information and exit\n"
-        + "      --json           output formatted as JSON Lines\n"
-        + "      --color <WHEN>   colorize output: auto, always, never [default: auto]\n"
-        + "      --theme <NAME>   override active oote palette\n"
-        + "      --mcp            run as Model Context Protocol stdio server\n";
+        + "  -c, --changes          like verbose but report only when a change is made\n"
+        + "  -f, --silent, --quiet  suppress most error messages\n"
+        + "  -v, --verbose          output a diagnostic for every file processed\n"
+        + "  -R, --recursive        operate on files and directories recursively\n"
+        + "      --reference=RFILE  use RFILE's group rather than specifying a GROUP\n"
+        + "  -h, --no-dereference   affect symbolic links instead of any referenced file\n"
+        + "      --dry-run          simulate group changes without disk writes\n"
+        + "      --tmpfiles         synthesize declarative systemd-tmpfiles rules\n"
+        + "      --demo             run demonstration scenarios with synthetic fixtures\n"
+        + "      --json             output formatted as JSON Lines\n"
+        + "      --help             display this help and exit\n"
+        + "      --version          output version information and exit\n"
+        + "      --mcp              run as Model Context Protocol stdio server\n";
 }
 
-fn render_version() -> String {
-    return "oochgrp 0.1.0 (openOODA sovereign files & navigation)\n";
+pub fn render_version() -> String {
+    return "oochgrp 0.2.0 (openOODA sovereign files & navigation)\n";
 }
 
-fn main(args: List[String]) -> Int {
-    let num_args: Int = list_len(args);
+pub fn main(
+    fs: &FsReadCap,
+    proc_cap: &ProcessCap,
+    _env: &EnvCap,
+    args: List[String]
+) -> Result[Int, String] {
+    let opts: ChgrpOpts = parse_chgrp_opts(args);
+
+    if opts.help_mode {
+        print(render_help());
+        return Ok(0);
+    }
+    if opts.version_mode {
+        print(render_version());
+        return Ok(0);
+    }
+    if opts.mcp_mode {
+        run_mcp_server(fs, proc_cap);
+        return Ok(0);
+    }
+
+    if opts.demo_mode {
+        let demo_targets: List[ChgrpTarget] = build_demo_targets();
+        let demo_sum: ChgrpSummary = build_demo_summary();
+
+        if opts.tmpfiles_mode {
+            let tmp_rules: List[TmpfilesEntry] = build_demo_tmpfiles();
+            print(format_tmpfiles_config(tmp_rules));
+            return Ok(0);
+        }
+
+        if opts.json_mode {
+            print(render_json_results(demo_targets, demo_sum, "systemd-journal", 190));
+            return Ok(0);
+        }
+
+        let n: Int = list_len(demo_targets);
+        let mut i: Int = 0;
+        while i < n {
+            let t: ChgrpTarget = list_get(demo_targets, i);
+            print(render_target_output(t, true, opts.changes_only, opts.quiet));
+            i = i + 1;
+        }
+        return Ok(0);
+    }
+
+    let mut target_group: String = opts.group;
+    let mut target_gid: Int = -1;
+
+    if chars_len(opts.reference) > 0 {
+        target_group = inspect_path_group(proc_cap, opts.reference);
+        target_gid = inspect_path_gid(proc_cap, opts.reference);
+    } else if chars_len(target_group) > 0 {
+        let sys_groups: List[GroupEntry] = load_system_groups(fs);
+        let resolved: GroupEntry = resolve_group(sys_groups, target_group);
+        target_gid = resolved.gid;
+    }
+
+    let num_files: Int = list_len(opts.files);
+    if chars_len(target_group) == 0 || num_files == 0 {
+        print(render_help());
+        return Ok(1);
+    }
+
+    let mut planned_targets: List[ChgrpTarget] = list_new();
     let mut i: Int = 0;
-
-    while i < num_args {
-        let arg: String = list_get(args, i);
-        if arg == "-h" || arg == "--help" {
-            print(render_help());
-            return 0;
-        }
-        if arg == "-v" || arg == "--version" {
-            print(render_version());
-            return 0;
-        }
-        if arg == "--mcp" {
-            print("{\"jsonrpc\":\"2.0\",\"result\":{\"status\":\"ready\",\"tool\":\"oochgrp\"}}\n");
-            return 0;
-        }
+    while i < num_files {
+        let fpath: String = list_get(opts.files, i);
+        let curr_grp: String = inspect_path_group(proc_cap, fpath);
+        let curr_id: Int = inspect_path_gid(proc_cap, fpath);
+        let planned: ChgrpTarget = plan_single_target(fpath, curr_grp, curr_id, target_group, target_gid);
+        planned_targets = list_push(planned_targets, planned);
         i = i + 1;
     }
 
-    print("oochgrp: sovereign capability-bounded utility ready\n");
-    return 0;
+    if opts.tmpfiles_mode {
+        let tmpfiles_entries: List[TmpfilesEntry] = build_tmpfiles_rules(planned_targets, opts.recursive);
+        print(format_tmpfiles_config(tmpfiles_entries));
+        return Ok(0);
+    }
+
+    let executed_targets: List[ChgrpTarget] = execute_chgrp_plan(proc_cap, planned_targets, opts.recursive, opts.dry_run);
+    let sum: ChgrpSummary = summarize_targets(executed_targets);
+
+    if opts.json_mode {
+        print(render_json_results(executed_targets, sum, target_group, target_gid));
+        if sum.failed > 0 {
+            return Ok(1);
+        }
+        return Ok(0);
+    }
+
+    let n: Int = list_len(executed_targets);
+    let mut idx: Int = 0;
+    while idx < n {
+        let t: ChgrpTarget = list_get(executed_targets, idx);
+        print(render_target_output(t, opts.verbose, opts.changes_only, opts.quiet));
+        idx = idx + 1;
+    }
+
+    print(render_summary_warnings(sum));
+
+    if sum.failed > 0 {
+        return Ok(1);
+    }
+    return Ok(0);
 }

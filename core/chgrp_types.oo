@@ -1,0 +1,99 @@
+// # oochgrp Core Data Types
+//
+// Logline: Data structures for group records, path change targets, summaries, and tmpfiles rules.
+//
+// Setup: Encapsulates group database representation and declarative ownership definitions.
+//
+// Beats:
+//   1. Declare GroupEntry record for resolved group names, GIDs, and user membership.
+//   2. Declare ChgrpTarget record for individual path group change operations.
+//   3. Declare ChgrpSummary record for operational aggregate metrics.
+//   4. Declare TmpfilesEntry record for declarative systemd-tmpfiles specification.
+
+pub type GroupEntry = struct {
+    name: String,
+    gid: Int,
+    members: String
+};
+
+pub type ChgrpTarget = struct {
+    path: String,
+    current_group: String,
+    current_gid: Int,
+    target_group: String,
+    target_gid: Int,
+    status: String,
+    error_message: String
+};
+
+pub type ChgrpSummary = struct {
+    total: Int,
+    changed: Int,
+    retained: Int,
+    failed: Int
+};
+
+pub type TmpfilesEntry = struct {
+    action: String,
+    path: String,
+    mode: String,
+    uid: String,
+    gid: String,
+    age: String,
+    argument: String
+};
+
+pub fn make_group_entry(name: String, gid: Int, members: String) -> GroupEntry {
+    return GroupEntry {
+        name: name,
+        gid: gid,
+        members: members
+    };
+}
+
+pub fn make_chgrp_target(
+    path: String,
+    curr_group: String,
+    curr_gid: Int,
+    tgt_group: String,
+    tgt_gid: Int,
+    status: String,
+    err_msg: String
+) -> ChgrpTarget {
+    return ChgrpTarget {
+        path: path,
+        current_group: curr_group,
+        current_gid: curr_gid,
+        target_group: tgt_group,
+        target_gid: tgt_gid,
+        status: status,
+        error_message: err_msg
+    };
+}
+
+pub fn make_chgrp_summary(tot: Int, chg: Int, ret: Int, fail: Int) -> ChgrpSummary {
+    return ChgrpSummary {
+        total: tot,
+        changed: chg,
+        retained: ret,
+        failed: fail
+    };
+}
+
+pub fn make_tmpfiles_entry(
+    action: String,
+    path: String,
+    mode: String,
+    uid: String,
+    gid: String
+) -> TmpfilesEntry {
+    return TmpfilesEntry {
+        action: action,
+        path: path,
+        mode: mode,
+        uid: uid,
+        gid: gid,
+        age: "-",
+        argument: "-"
+    };
+}
